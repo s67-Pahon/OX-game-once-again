@@ -8,6 +8,7 @@ function App() {
   );
 }
 
+// Draw helpers
 function drawX(ctx, row, col, lineSpacing) {
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 5;
@@ -34,92 +35,87 @@ function drawO(ctx, row, col, lineSpacing) {
   ctx.stroke();
 }
 
+// Winner check for NxN
 function calculateWinner(board, gridSize) {
-  // Check rows
+  // rows
   for (let i = 0; i < gridSize; i++) {
     if (board[i][0] && board[i].every(cell => cell === board[i][0])) {
       return board[i][0];
     }
   }
-
-  // Check columns
+  // cols
   for (let i = 0; i < gridSize; i++) {
     if (board[0][i]) {
-      let isWin = true;
+      let ok = true;
       for (let j = 1; j < gridSize; j++) {
         if (board[j][i] !== board[0][i]) {
-          isWin = false;
+          ok = false;
           break;
         }
       }
-      if (isWin) {
-        return board[0][i];
-      }
+      if (ok) return board[0][i];
     }
   }
-
-  // Check diagonal (top-left to bottom-right)
+  // diag TL-BR
   if (board[0][0]) {
-    let isWin = true;
+    let ok = true;
     for (let i = 1; i < gridSize; i++) {
       if (board[i][i] !== board[0][0]) {
-        isWin = false;
+        ok = false;
         break;
       }
     }
-    if (isWin) {
-      return board[0][0];
-    }
+    if (ok) return board[0][0];
   }
-
-  // Check diagonal (top-right to bottom-left)
+  // diag TR-BL
   if (board[0][gridSize - 1]) {
-    let isWin = true;
+    let ok = true;
     for (let i = 1; i < gridSize; i++) {
       if (board[i][gridSize - 1 - i] !== board[0][gridSize - 1]) {
-        isWin = false;
+        ok = false;
         break;
       }
     }
-    if (isWin) {
-      return board[0][gridSize - 1];
-    }
+    if (ok) return board[0][gridSize - 1];
   }
-
   return null;
 }
 
 function GameBoard() {
   const canvasRef = useRef(null);
-  // gridSize is now a state variable, starting at 3.
-  const [gridSize, setGridSize] = useState(3);
-  // canvasSize is also state, so it can be updated.
-  const [canvasSize, setCanvasSize] = useState(gridSize * 100);
+  const fileInputRef = useRef(null);
+  const isRestoring = useRef(false);
 
-  const [turn, setTurn] = useState(1);
+  const [gridSize, setGridSize] = useState(3);
+  const [canvasSize, setCanvasSize] = useState(300);
+  const [turn, setTurn] = useState(1); // 1-based; odd=X's turn, even=O's turn
   const [board, setBoard] = useState(
-    Array.from({ length: gridSize }, () => Array(gridSize).fill(null))
+    Array.from({ length: 3 }, () => Array(3).fill(null))
   );
   const [winner, setWinner] = useState(null);
 
-  // This new effect runs ONLY when gridSize changes.
-  // It resets the entire game to match the new size.
+  // Resize/reset when gridSize changes (skip if coming from a Load)
   useEffect(() => {
     setCanvasSize(gridSize * 100);
+    if (isRestoring.current) {
+      isRestoring.current = false;
+      return;
+    }
     setTurn(1);
     setBoard(Array.from({ length: gridSize }, () => Array(gridSize).fill(null)));
     setWinner(null);
   }, [gridSize]);
 
-  // This effect handles all the drawing, as before.
-  // It runs whenever the board state changes.
+  // Draw grid and pieces
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     const lineSpacing = canvas.width / gridSize;
+
     ctx.beginPath();
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 2;
@@ -131,17 +127,16 @@ function GameBoard() {
     }
     ctx.stroke();
 
-    board.forEach((row, rowIndex) => {
-      row.forEach((cell, colIndex) => {
-        if (cell === 'X') {
-          drawX(ctx, rowIndex, colIndex, lineSpacing);
-        } else if (cell === 'O') {
-          drawO(ctx, rowIndex, colIndex, lineSpacing);
-        }
-      });
-    });
-  }, [board, gridSize]); 
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        const cell = board[r][c];
+        if (cell === 'X') drawX(ctx, r, c, lineSpacing);
+        else if (cell === 'O') drawO(ctx, r, c, lineSpacing);
+      }
+    }
+  }, [board, gridSize]);
 
+  // Click to place a mark
   const handleCanvasClick = (event) => {
     if (winner || turn > gridSize * gridSize) return;
 
@@ -149,21 +144,21 @@ function GameBoard() {
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+
     const lineSpacing = canvas.width / gridSize;
     const col = Math.floor(x / lineSpacing);
     const row = Math.floor(y / lineSpacing);
 
     if (board[row][col]) return;
 
-    const currentPlayerSymbol = turn % 2 === 1 ? 'X' : 'O';
-    const newBoard = board.map(arr => [...arr]);
-    newBoard[row][col] = currentPlayerSymbol;
+    const symbol = turn % 2 === 1 ? 'X' : 'O';
+    const newBoard = board.map(arr => arr.slice());
+    newBoard[row][col] = symbol;
+
     setBoard(newBoard);
 
-    const newWinner = calculateWinner(newBoard, gridSize);
-    if (newWinner) {
-      setWinner(newWinner);
-    }
+    const w = calculateWinner(newBoard, gridSize);
+    if (w) setWinner(w);
 
     setTurn(turn + 1);
   };
@@ -174,35 +169,184 @@ function GameBoard() {
     setWinner(null);
   };
 
+  // ===== JSON Save/Load (spec-compliant) =====
+  // Map internal state -> { board: [["X","O"," "]...], turn: "X"|"O"|null, status: ... }
+  function toSaveJSON(board, turnNumber, winnerSymbol) {
+    const N = board.length;
+
+    // compute status
+    let status = 'in_progress';
+    if (winnerSymbol === 'X') status = 'X_wins';
+    else if (winnerSymbol === 'O') status = 'O_wins';
+    else {
+      const filled = board.flat().filter(v => v === 'X' || v === 'O').length;
+      if (filled === N * N) status = 'draw';
+    }
+
+    // turn symbol for JSON
+    let turnSymbol = null;
+    if (status === 'in_progress') {
+      turnSymbol = turnNumber % 2 === 1 ? 'X' : 'O';
+    }
+
+    // convert null -> " "
+    const jsonBoard = board.map(row =>
+      row.map(cell => (cell === null ? ' ' : cell))
+    );
+
+    return {
+      board: jsonBoard,
+      turn: turnSymbol, // "X" | "O" | null
+      status            // "in_progress" | "X_wins" | "O_wins" | "draw"
+    };
+  }
+
+  // Map JSON -> internal state (with validation)
+  function fromSaveJSON(data) {
+    if (!data || !Array.isArray(data.board) || data.board.length === 0) {
+      throw new Error('Invalid: board missing');
+    }
+
+    const N = data.board.length;
+    if (!data.board.every(row => Array.isArray(row) && row.length === N)) {
+      throw new Error('Invalid: board must be N x N');
+    }
+
+    const allowedCell = new Set(['X', 'O', ' ']);
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (!allowedCell.has(data.board[r][c])) {
+          throw new Error('Invalid: board cell must be "X","O"," "');
+        }
+      }
+    }
+
+    const allowedStatus = new Set(['in_progress', 'X_wins', 'O_wins', 'draw']);
+    if (!allowedStatus.has(data.status)) {
+      throw new Error('Invalid: status');
+    }
+
+    const allowedTurn = new Set(['X', 'O', null]);
+    if (!allowedTurn.has((data.turn ?? null))) {
+      throw new Error('Invalid: turn');
+    }
+
+    // " " -> null
+    const restoredBoard = data.board.map(row =>
+      row.map(cell => (cell === ' ' ? null : cell))
+    );
+
+    let restoredWinner = null;
+    if (data.status === 'X_wins') restoredWinner = 'X';
+    if (data.status === 'O_wins') restoredWinner = 'O';
+
+    // derive a turn number for internal logic
+    const filled = restoredBoard.flat().filter(v => v === 'X' || v === 'O').length;
+    let turnNumber;
+    if (data.status === 'in_progress') {
+      turnNumber = filled + 1;
+    } else {
+      // game finished; push over max to block further moves
+      turnNumber = N * N + 1;
+    }
+
+    return {
+      gridSize: N,
+      board: restoredBoard,
+      winner: restoredWinner,
+      turnNumber
+    };
+  }
+
+  const downloadSaveJSON = () => {
+    try {
+      const payload = toSaveJSON(board, turn, winner);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tic-tac-toe.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to create save file.');
+    }
+  };
+
+  const uploadSaveJSON = (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const raw = JSON.parse(e.target.result);
+        const restored = fromSaveJSON(raw);
+
+        isRestoring.current = true;
+        setGridSize(restored.gridSize);
+        setCanvasSize(restored.gridSize * 100);
+        setBoard(restored.board);
+        setWinner(restored.winner);
+        setTurn(restored.turnNumber);
+      } catch (err) {
+        console.error(err);
+        alert('Invalid JSON save.');
+      } finally {
+        event.target.value = ''; // allow re-uploading the same file
+      }
+    };
+    reader.readAsText(file);
+  };
+  // ===========================================
+
   let status;
   if (winner) {
-    status = `Winner: Player ${winner}`;
+    status = 'Winner: Player ' + winner;
   } else if (turn > gridSize * gridSize) {
     status = "It's a Draw!";
   } else {
-    status = `Turn ${turn}: Player ${turn % 2 === 1 ? 'X' : 'O'}`;
+    status = 'Turn ' + turn + ': Player ' + (turn % 2 === 1 ? 'X' : 'O');
   }
 
   return (
     <>
       <h1>Tic Tac Toe</h1>
+
       <div style={{ margin: '10px 0' }}>
         <button onClick={() => setGridSize(3)} style={{ marginRight: '5px' }}>3x3</button>
         <button onClick={() => setGridSize(4)} style={{ marginRight: '5px' }}>4x4</button>
-        <button onClick={() => setGridSize(5)}>5x5</button>
+        <button onClick={() => setGridSize(5)} style={{ marginRight: '5px' }}>5x5</button>
       </div>
+
       <h2>{status}</h2>
+
       <canvas
         ref={canvasRef}
         width={canvasSize}
         height={canvasSize}
         style={{ border: '1px solid black' }}
         onClick={handleCanvasClick}
-      ></canvas>
-      <div>
-        <button id="reset-btn" onClick={handleReset} style={{ marginTop: '10px' }}>
+      />
+
+      <div style={{ marginTop: '10px' }}>
+        <button onClick={handleReset} style={{ marginRight: '6px' }}>
           Reset
         </button>
+        <button onClick={downloadSaveJSON} style={{ marginRight: '6px' }}>
+          Download Save
+        </button>
+        <button onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+          Upload Save
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={uploadSaveJSON}
+          style={{ display: 'none' }}
+        />
       </div>
     </>
   );
