@@ -8,6 +8,11 @@ function App() {
   );
 }
 
+const LABEL = {
+  X: '△',   
+  O: '◻'    
+};
+
 // Draw helpers
 function drawX(ctx, row, col, lineSpacing) {
   ctx.strokeStyle = 'black';
@@ -16,23 +21,27 @@ function drawX(ctx, row, col, lineSpacing) {
   const y = row * lineSpacing;
   const padding = lineSpacing / 5;
   ctx.beginPath();
-  ctx.moveTo(x + padding, y + padding);
-  ctx.lineTo(x + lineSpacing - padding, y + lineSpacing - padding);
-  ctx.moveTo(x + lineSpacing - padding, y + padding);
-  ctx.lineTo(x + padding, y + lineSpacing - padding);
+  ctx.moveTo(x + lineSpacing / 2, y + padding);                 // Top point
+  ctx.lineTo(x + lineSpacing - padding, y + lineSpacing - padding); // Bottom right
+  ctx.lineTo(x + padding, y + lineSpacing - padding);           // Bottom left
+  ctx.closePath(); // Connects back to the top point
   ctx.stroke();
 }
 
 function drawO(ctx, row, col, lineSpacing) {
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 5;
-  const centerX = col * lineSpacing + lineSpacing / 2;
-  const centerY = row * lineSpacing + lineSpacing / 2;
+  const x = col * lineSpacing;
+  const y = row * lineSpacing;
   const padding = lineSpacing / 5;
-  const radius = lineSpacing / 2 - padding;
   ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+  ctx.moveTo(x + padding, y + padding);                              // Top-left
+  ctx.lineTo(x + lineSpacing - padding, y + padding);                // Top-right
+  ctx.lineTo(x + lineSpacing - padding, y + lineSpacing - padding);  // Bottom-right
+  ctx.lineTo(x + padding, y + lineSpacing - padding);                // Bottom-left
+  ctx.closePath(); // Connects back to top-left
   ctx.stroke();
+
 }
 
 // Winner check for NxN
@@ -94,17 +103,6 @@ function GameBoard() {
   );
   const [winner, setWinner] = useState(null);
 
-  // Resize/reset when gridSize changes (skip if coming from a Load)
-  useEffect(() => {
-    setCanvasSize(gridSize * 100);
-    if (isRestoring.current) {
-      isRestoring.current = false;
-      return;
-    }
-    setTurn(1);
-    setBoard(Array.from({ length: gridSize }, () => Array(gridSize).fill(null)));
-    setWinner(null);
-  }, [gridSize]);
 
   // Draw grid and pieces
   useEffect(() => {
@@ -135,6 +133,15 @@ function GameBoard() {
       }
     }
   }, [board, gridSize]);
+
+ const applyGridSize = (N) => {
+  isRestoring.current = false;            // not loading a save
+  setGridSize(N);
+  setCanvasSize(N * 100);
+  setTurn(1);
+  setBoard(Array.from({ length: N }, () => Array(N).fill(null)));
+  setWinner(null);
+};
 
   // Click to place a mark
   const handleCanvasClick = (event) => {
@@ -303,22 +310,25 @@ function GameBoard() {
 
   let status;
   if (winner) {
-    status = 'Winner: Player ' + winner;
+    status = 'Winner: ' + (LABEL[winner] || winner);
   } else if (turn > gridSize * gridSize) {
     status = "It's a Draw!";
   } else {
-    status = 'Turn ' + turn + ': Player ' + (turn % 2 === 1 ? 'X' : 'O');
+    const current = turn % 2 === 1 ? 'X' : 'O';
+    status = 'Turn ' + turn + ': ' + (LABEL[current] || current);
   }
+
 
   return (
     <>
       <h1>Tic Tac Toe</h1>
 
       <div style={{ margin: '10px 0' }}>
-        <button onClick={() => setGridSize(3)} style={{ marginRight: '5px' }}>3x3</button>
-        <button onClick={() => setGridSize(4)} style={{ marginRight: '5px' }}>4x4</button>
-        <button onClick={() => setGridSize(5)} style={{ marginRight: '5px' }}>5x5</button>
+        <button onClick={() => applyGridSize(3)} style={{ marginRight: '5px' }}>3x3</button>
+        <button onClick={() => applyGridSize(4)} style={{ marginRight: '5px' }}>4x4</button>
+        <button onClick={() => applyGridSize(5)} style={{ marginRight: '5px' }}>5x5</button>
       </div>
+
 
       <h2>{status}</h2>
 
